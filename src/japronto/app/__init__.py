@@ -12,12 +12,13 @@ import uvloop
 from japronto.router import Router, RouteNotFoundException
 from japronto.protocol.cprotocol import Protocol
 from japronto.protocol.creaper import Reaper
+from japronto import helpers
 
 
 signames = {
     int(v): v.name for k, v in signal.__dict__.items()
-    if isinstance(v, signal.Signals)}
-
+    if isinstance(v, signal.Signals)
+}
 
 class Application:
     def __init__(self, *, reaper_settings=None, log_request=None,
@@ -31,6 +32,8 @@ class Application:
         self._request_extensions = {}
         self._protocol_factory = protocol_factory or Protocol
         self._debug = debug
+        self._on_startup = []
+        self._on_cleanup = []
 
     @property
     def loop(self):
@@ -46,12 +49,51 @@ class Application:
 
         return self._router
 
+    @property
+    def on_startup(self):
+        return self._on_startup
+
+    @property
+    def on_cleanup(self):
+        return self._on_cleanup
+
+
     def __finalize(self):
         self.loop
         self.router
 
         self._reaper = Reaper(self, **self._reaper_settings)
         self._matcher = self._router.get_matcher()
+
+    def route(self, path, methods=["GET"]):
+        '''
+        Shorthand route decorator. Avoids need to register
+        handlers to the router directly with `app.router.add_route()`.
+        '''
+        def decorator(handler):
+            def wrapper(*args, **kwargs):
+                return handler(*args, **kwargs)
+            self.router.add_route(path, wrapper, methods=methods)
+            return wrapper
+        return decorator
+
+    def get(self, path):
+        return self.route(path, methods=["GET"])
+
+    def post(self, path):
+        return self.route(path, methods=["POST"])
+
+    def put(self, path):
+        return self.route(path, methods=["PUT"])
+
+    def patch(self, path):
+        return self.route(path, methods=["PATCH"])
+
+    def options(self, path):
+        return self.route(path, methods=["OPTIONS"])
+
+    def delete(self, path):
+        return self.route(path, methods=["DELETE"])
 
     def protocol_error_handler(self, error):
         print(error)
@@ -163,13 +205,26 @@ class Application:
         loop = self.loop
         asyncio.set_event_loop(loop)
 
-        server_coro = loop.create_server(
-            lambda: self._protocol_factory(self), sock=sock)
+        for prepare in self.on_startup:
+            loop.run_until_complete(prepare(self))
 
-        server = loop.run_until_complete(server_coro)
+        async def start_serving():
+            try:
+                server = await loop.create_server(
+                    lambda: self._protocol_factory(self), sock=sock)
+                print('Accepting connections on http://{}:{}'.format(host, port))
+                while True:
+                    await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                server.close()
+                await server.wait_closed()
 
-        loop.add_signal_handler(signal.SIGTERM, loop.stop)
-        loop.add_signal_handler(signal.SIGINT, loop.stop)
+        def stop_serving():
+            for task in helpers.all_tasks(loop):
+                task.cancel()
+
+        loop.add_signal_handler(signal.SIGTERM, stop_serving)
+        loop.add_signal_handler(signal.SIGINT, stop_serving)
 
         if reloader_pid:
             from japronto.reloader import ChangeDetector
@@ -179,12 +234,12 @@ class Application:
         print('Accepting connections on http://{}:{}'.format(host, port))
 
         try:
-            loop.run_forever()
+            loop.run_until_complete(start_serving())
         finally:
-            server.close()
-            loop.run_until_complete(server.wait_closed())
             loop.run_until_complete(self.drain())
             self._reaper.stop()
+            for finalize in self.on_cleanup:
+                loop.run_until_complete(finalize(self))
             loop.close()
 
             # break reference and cleanup matcher buffer
@@ -193,7 +248,7 @@ class Application:
     def _run(self, *, host, port, worker_num=None, reloader_pid=None,
              debug=None):
         self._debug = debug or self._debug
-        if self._debug and not self._log_request:
+        if self._debug and self._log_request is None:
             self._log_request = self._debug
 
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -252,12 +307,12 @@ class Application:
             return
 
         reloader_pid = None
-        if reload:
-            if '_JAPR_RELOADER' not in os.environ:
-                from japronto.reloader import exec_reloader
-                exec_reloader(host=host, port=port, worker_num=worker_num)
-            else:
-                reloader_pid = int(os.environ['_JAPR_RELOADER'])
+        jarp_var = os.environ.get('_JAPR_RELOADER')
+        if reload and jarp_var:
+            reloader_pid = int(jarp_var)
+        elif reload:
+            from japronto.reloader import exec_reloader
+            exec_reloader(host=host, port=port, worker_num=worker_num)
 
         self._run(
             host=host, port=port, worker_num=worker_num,
