@@ -9,6 +9,7 @@ import faulthandler
 
 import uvloop
 
+from inspect import iscoroutinefunction
 from japronto.router import Router, RouteNotFoundException
 from japronto.protocol.cprotocol import Protocol
 from japronto.protocol.creaper import Reaper
@@ -21,8 +22,7 @@ signames = {
 }
 
 class Application:
-    def __init__(self, *, reaper_settings=None, log_request=None,
-                 protocol_factory=None, debug=False):
+    def __init__(self, *, reaper_settings=None, log_request=None, protocol_factory=None, debug=False):
         self._router = None
         self._loop = None
         self._connections = set()
@@ -65,34 +65,37 @@ class Application:
         self._reaper = Reaper(self, **self._reaper_settings)
         self._matcher = self._router.get_matcher()
 
-    def route(self, path, methods=["GET"]):
+    def route(self, path: str = '/', methods: list = []):
         '''
         Shorthand route decorator. Avoids need to register
         handlers to the router directly with `app.router.add_route()`.
         '''
         def decorator(handler):
-            def wrapper(*args, **kwargs):
+            async def wrapper(*args, **kwargs):
+                # check awaitable handler
+                if iscoroutinefunction(handler):
+                    return await handler(*args, **kwargs)
                 return handler(*args, **kwargs)
             self.router.add_route(path, wrapper, methods=methods)
             return wrapper
         return decorator
 
-    def get(self, path):
+    def get(self, path: str = '/'):
         return self.route(path, methods=["GET"])
 
-    def post(self, path):
+    def post(self, path: str = '/'):
         return self.route(path, methods=["POST"])
 
-    def put(self, path):
+    def put(self, path: str = '/'):
         return self.route(path, methods=["PUT"])
 
-    def patch(self, path):
+    def patch(self, path: str = '/'):
         return self.route(path, methods=["PATCH"])
 
-    def options(self, path):
+    def options(self, path: str = '/'):
         return self.route(path, methods=["OPTIONS"])
 
-    def delete(self, path):
+    def delete(self, path: str = '/'):
         return self.route(path, methods=["DELETE"])
 
     def protocol_error_handler(self, error):
@@ -110,7 +113,18 @@ class Application:
     def default_request_logger(self, request):
         print(request.remote_addr, request.method, request.path)
 
+    def set_error_handler(self, typ, handler):
+        '''
+        Shorthand `set_error_handler` decorator for `app.add_error_handler`.
+        '''
+        if typ is None: raise AssertionError("'typ' Can't be defined as 'None'.")
+        def decorator(f):
+            return f
+        self._error_handlers.append((typ, handler))
+        return decorator
+
     def add_error_handler(self, typ, handler):
+        if typ is None: raise AssertionError("'typ' Can't be defined as 'None'.")
         self._error_handlers.append((typ, handler))
 
     def default_error_handler(self, request, exception):
@@ -119,13 +133,10 @@ class Application:
         if isinstance(exception, asyncio.CancelledError):
             return request.Response(code=503, text='Service unavailable')
 
-        tb = traceback.format_exception(
-            None, exception, exception.__traceback__)
+        tb = traceback.format_exception(None, exception, exception.__traceback__)
         tb = ''.join(tb)
         print(tb, file=sys.stderr, end='')
-        return request.Response(
-            code=500,
-            text=tb if self._debug else 'Internal Server Error')
+        return request.Response(code=500, text=tb if self._debug else 'Internal Server Error')
 
     def error_handler(self, request, exception):
         for typ, handler in self._error_handlers:
@@ -192,6 +203,17 @@ class Application:
         for c in busy:
             c.pipeline_cancel()
 
+    def set_req_extension(self, handler, name=None, property=False):
+        '''
+        Shorthand `set_req_extension` decorator for `app.extend_request`.
+        '''
+        if not name:
+            name = handler.__name__
+        def decorator(f):
+            return f
+        self._request_extensions[name] = (handler, property)
+        return decorator
+
     def extend_request(self, handler, *, name=None, property=False):
         if not name:
             name = handler.__name__
@@ -210,8 +232,7 @@ class Application:
 
         async def start_serving():
             try:
-                server = await loop.create_server(
-                    lambda: self._protocol_factory(self), sock=sock)
+                server = await loop.create_server(lambda: self._protocol_factory(self), sock=sock)
                 print('Accepting connections on http://{}:{}'.format(host, port))
                 while True:
                     await asyncio.sleep(3600)
@@ -230,8 +251,6 @@ class Application:
             from japronto.reloader import ChangeDetector
             detector = ChangeDetector(loop)
             detector.start()
-
-        print('Accepting connections on http://{}:{}'.format(host, port))
 
         try:
             loop.run_until_complete(start_serving())
@@ -275,10 +294,7 @@ class Application:
         signal.signal(signal.SIGHUP, stop)
 
         for _ in range(worker_num or 1):
-            worker = multiprocessing.Process(
-                target=self.serve,
-                kwargs=dict(sock=sock, host=host, port=port,
-                            reloader_pid=reloader_pid))
+            worker = multiprocessing.Process(target=self.serve, kwargs=dict(sock=sock, host=host, port=port, reloader_pid=reloader_pid))
             worker.daemon = True
             worker.start()
             workers.add(worker)
@@ -292,6 +308,7 @@ class Application:
             if worker.exitcode > 0:
                 print('Worker exited with code {}'.format(worker.exitcode))
             elif worker.exitcode < 0:
+                print("worker: ", worker)
                 try:
                     signame = signames[-worker.exitcode]
                 except KeyError:
@@ -301,7 +318,7 @@ class Application:
                 else:
                     print('Worker crashed on signal {}!'.format(signame))
 
-    def run(self, host='0.0.0.0', port=8080, *, worker_num=None, reload=False,
+    def run(self, host='127.0.0.1', port=8080, *, worker_num=None, reload=False,
             debug=False):
         if os.environ.get('_JAPR_IGNORE_RUN'):
             return

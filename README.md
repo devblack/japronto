@@ -45,13 +45,12 @@ Here is how a simple web application looks like in Japronto:
 ```python
 from japronto import Application
 
+app = Application()
 
+@app.route('/')
 def hello(request):
     return request.Response(text='Hello world!')
 
-
-app = Application()
-app.router.add_route('/', hello)
 app.run(debug=True)
 ```
 

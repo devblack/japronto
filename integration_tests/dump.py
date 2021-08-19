@@ -1,21 +1,38 @@
-import base64
-import asyncio
-
-
+from base64 import b64encode
+from asyncio import sleep as async_sleep
 from japronto.app import Application
 
+app = Application()
 
 class ForcedException(Exception):
     pass
 
+def HandleNoneMethod(request, exception):
+    result = {
+        "method": request.method,
+        "path": request.path,
+        "query_string": request.query_string,
+        "headers": request.headers,
+        "route": request.route and request.route.pattern,
+        "exception": {
+            "type": type(exception).__name__,
+            "args": ", ".join(str(a) for a in exception.args)
+        }
+    }
 
-def dump(request, exception=None):
-    if not exception and 'Force-Raise' in request.headers:
+    return request.Response(code=500, json=result)
+
+@app.get('/dump/{p1}/{p2}')
+@app.get('/dump1/{p1}/{p2}')
+@app.get('/dump2/{p1}/{p2}')
+@app.set_error_handler(ForcedException, HandleNoneMethod)
+def dump(request):
+    if 'Force-Raise' in request.headers:
         raise ForcedException(request.headers['Force-Raise'])
 
     body = request.body
     if body is not None:
-        body = base64.b64encode(body).decode('ascii')
+        body = b64encode(body).decode('ascii')
 
     result = {
         "method": request.method,
@@ -27,33 +44,20 @@ def dump(request, exception=None):
         "route": request.route and request.route.pattern
     }
 
-    if exception:
-        result['exception'] = {
-         "type": type(exception).__name__,
-         "args": ", ".join(str(a) for a in exception.args)
-        }
+    return request.Response(code=200, json=result)
 
-    return request.Response(code=500 if exception else 200, json=result)
-
-
+@app.get('/async/dump/{p1}/{p2}')
+@app.get('/async/dump1/{p1}/{p2}')
+@app.get('/async/dump2/{p1}/{p2}')
 async def adump(request):
     sleep = float(request.query.get('sleep', 0))
-    await asyncio.sleep(sleep)
+    await async_sleep(sleep)
 
-    return dump(request)
+    return await dump(request)
 
-
-app = Application()
-
-r = app.router
-r.add_route('/dump/{p1}/{p2}', dump)
-r.add_route('/dump1/{p1}/{p2}', dump)
-r.add_route('/dump2/{p1}/{p2}', dump)
-r.add_route('/async/dump/{p1}/{p2}', adump)
-r.add_route('/async/dump1/{p1}/{p2}', adump)
-r.add_route('/async/dump2/{p1}/{p2}', adump)
-app.add_error_handler(None, dump)
-
+# sigsegv-crash-process when None class is assinged
+# app.add_error_handler(None, dump)
+# app.add_error_handler(ForcedException, HandleNoneMethod)
 
 if __name__ == '__main__':
-    app.run()
+    app.run(debug=True)

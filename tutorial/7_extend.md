@@ -8,9 +8,11 @@ on request completion by registering a callback in a view.
   # examples/7_extend/extend.py
   from japronto import Application
 
+  app = Application()
 
   # This view accesses custom method host_startswith
   # and a custom property reversed_agent. Both are registered later.
+  @app.get('/')
   def extended_hello(request):
       if request.host_startswith('api.'):
           text = 'Hello ' + request.reversed_agent
@@ -22,6 +24,7 @@ on request completion by registering a callback in a view.
 
   # This view registers a callback, such callbacks are executed after handler
   # exit and the response is ready to be sent over the wire.
+  @app.get('/callback')
   def with_callback(request):
       def cb(r):
           print('Done!')
@@ -42,16 +45,11 @@ on request completion by registering a callback in a view.
   def host_startswith(request, prefix):
       return request.headers['Host'].startswith(prefix)
 
-  app = Application()
   # Finally register out custom property and method
   # By default the names are taken from function names
   # unelss you provide `name` keyword parameter.
   app.extend_request(reversed_agent, property=True)
   app.extend_request(host_startswith)
-
-  r = app.router
-  r.add_route('/', extended_hello)
-  r.add_route('/callback', with_callback)
 
   app.run()
   ```

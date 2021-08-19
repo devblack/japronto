@@ -7,8 +7,7 @@ import time
 import psutil
 
 
-def start_server(script, *, stdout=None, path=None, sanitize=True, wait=True,
-                 return_process=False, buffer=False):
+def start_server(script, *, stdout=None, path=None, sanitize=True, wait=True, return_process=False, buffer=False):
     if not isinstance(script, list):
         script = [script]
     if path:

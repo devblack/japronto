@@ -6,9 +6,9 @@ three categories: Request line and headers, message body and miscellaneous.
   ```python
   # examples/4_request/request.py
   from json import JSONDecodeError
-
   from japronto import Application
 
+  app = Application()
 
   # Request line and headers.
   # This represents the part of a request that comes before message body.
@@ -17,6 +17,7 @@ three categories: Request line and headers, message body and miscellaneous.
   # `query_string` set to `a=1` and `query` set to `{'a': '1'}`.
   # Additionally if headers are sent they will be present in `request.headers`
   # dictionary. The keys are normalized to standard `Camel-Cased` convention.
+  @app.get('/basic')
   def basic(request):
       text = """Basic request properties:
         Method: {0.method}
@@ -43,6 +44,7 @@ three categories: Request line and headers, message body and miscellaneous.
   # `form` and `files` attributes are dictionaries respectively used for HTML forms and
   # HTML file uploads. The `json` helper property will try to decode `body` as a
   # JSON document and give you resulting Python data type.
+  @app.get('/body')
   def body(request):
       text = """Body related properties:
         Mime type: {0.mime_type}
@@ -72,6 +74,7 @@ three categories: Request line and headers, message body and miscellaneous.
   # keep connection open after the response is delivered. `match_dict` contains
   # route placeholder values as documented in `2_router.md`. `cookies` contains
   # a dictionary of HTTP cookies if any.
+  @app.get('/misc')
   def misc(request):
       text = """Miscellaneous:
         Matched route: {0.route}
@@ -89,11 +92,6 @@ three categories: Request line and headers, message body and miscellaneous.
 
       return request.Response(text=text)
 
-
-  app = Application()
-  app.router.add_route('/basic', basic)
-  app.router.add_route('/body', body)
-  app.router.add_route('/misc', misc)
   app.run()
   ```
 

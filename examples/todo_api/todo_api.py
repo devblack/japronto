@@ -1,20 +1,23 @@
 import os.path
 import sqlite3
 from functools import partial
-
 from japronto import Application
 
+DB_FILE = os.path.abspath(os.path.join(os.path.dirname(__file__), 'todo.sqlite'))
+db_connect = partial(sqlite3.connect, DB_FILE)
 
-def add_todo(request):
-    cur = request.cursor
-    todo = request.json["todo"]
-    cur.execute("""INSERT INTO todos (todo) VALUES (?)""", (todo,))
-    last_id = cur.lastrowid
-    cur.connection.commit()
+def maybe_create_schema():
+    db = db_connect()
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS todos
+        (id INTEGER PRIMARY KEY, todo TEXT)""")
+    db.close()
 
-    return request.Response(json={"id": last_id, "todo": todo})
+maybe_create_schema()
+app = Application()
 
 
+@app.get('/todos')
 def list_todos(request):
     cur = request.cursor
     cur.execute("""SELECT id, todo FROM todos""")
@@ -22,7 +25,7 @@ def list_todos(request):
 
     return request.Response(json={"results": todos})
 
-
+@app.get('/todos/{id}')
 def show_todo(request):
     cur = request.cursor
     id = int(request.match_dict['id'])
@@ -34,7 +37,7 @@ def show_todo(request):
 
     return request.Response(json=todo)
 
-
+@app.delete('/todos/{id}')
 def delete_todo(request):
     cur = request.cursor
     id = int(request.match_dict['id'])
@@ -45,23 +48,15 @@ def delete_todo(request):
 
     return request.Response(json={})
 
+@app.post('/todos')
+def add_todo(request):
+    cur = request.cursor
+    todo = request.json["todo"]
+    cur.execute("""INSERT INTO todos (todo) VALUES (?)""", (todo,))
+    last_id = cur.lastrowid
+    cur.connection.commit()
 
-DB_FILE = os.path.abspath(
-    os.path.join(os.path.dirname(__file__), 'todo.sqlite'))
-db_connect = partial(sqlite3.connect, DB_FILE)
-
-
-def maybe_create_schema():
-    db = db_connect()
-    db.execute("""
-        CREATE TABLE IF NOT EXISTS todos
-        (id INTEGER PRIMARY KEY, todo TEXT)""")
-    db.close()
-
-
-maybe_create_schema()
-app = Application()
-
+    return request.Response(json={"id": last_id, "todo": todo})
 
 def cursor(request):
     def done_cb(request):
@@ -73,12 +68,5 @@ def cursor(request):
 
     return request.extra['conn'].cursor()
 
-
 app.extend_request(cursor, property=True)
-router = app.router
-router.add_route('/todos', list_todos, method='GET')
-router.add_route('/todos/{id}', show_todo, method='GET')
-router.add_route('/todos/{id}', delete_todo, method='DELETE')
-router.add_route('/todos', add_todo, method='POST')
-
 app.run()
