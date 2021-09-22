@@ -313,7 +313,7 @@ class Application:
                 else:
                     print('Worker crashed on signal {}!'.format(signame))
 
-    def run(self, host='127.0.0.1', port=8080, *, worker_num=None, reload=False, debug=False):
+    def run(self, host='0.0.0.0', port=8080, *, worker_num=None, reload=False, debug=False):
         if os_environ.get('_JAPR_IGNORE_RUN'):
             return
 
