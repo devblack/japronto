@@ -2,14 +2,14 @@ import signal
 import asyncio
 import traceback
 import socket
-import os
 import sys
-import multiprocessing
-import faulthandler
 
-import uvloop
-
+from os import set_inheritable as os_set_inheritable, environ as os_environ
+from multiprocessing import Process as mult_process
+from faulthandler import enable as enablefaulthandler
+from uvloop import new_event_loop as uv_new_event_loop
 from inspect import iscoroutinefunction
+
 from japronto.router import Router, RouteNotFoundException
 from japronto.protocol.cprotocol import Protocol
 from japronto.protocol.creaper import Reaper
@@ -38,8 +38,7 @@ class Application:
     @property
     def loop(self):
         if not self._loop:
-            self._loop = uvloop.new_event_loop()
-
+            self._loop = uv_new_event_loop()
         return self._loop
 
     @property
@@ -111,6 +110,7 @@ class Application:
         return ''.join(response).encode('utf-8') + error
 
     def default_request_logger(self, request):
+        print(request.transport)
         print(request.remote_addr, request.method, request.path)
 
     def set_error_handler(self, typ, handler):
@@ -193,9 +193,7 @@ class Application:
             if not busy:
                 break
             else:
-                print(
-                    "{} seconds remaining, {} connections still busy"
-                    .format(x, len(busy)))
+                print("{} seconds remaining, {} connections still busy".format(x, len(busy)))
 
         _, busy = self._get_idle_and_busy_connections()
         if busy:
@@ -221,7 +219,7 @@ class Application:
         self._request_extensions[name] = (handler, property)
 
     def serve(self, *, sock, host, port, reloader_pid):
-        faulthandler.enable()
+        enablefaulthandler()
         self.__finalize()
 
         loop = self.loop
@@ -233,7 +231,6 @@ class Application:
         async def start_serving():
             try:
                 server = await loop.create_server(lambda: self._protocol_factory(self), sock=sock)
-                print('Accepting connections on http://{}:{}'.format(host, port))
                 while True:
                     await asyncio.sleep(3600)
             except asyncio.CancelledError:
@@ -264,8 +261,7 @@ class Application:
             # break reference and cleanup matcher buffer
             del self._matcher
 
-    def _run(self, *, host, port, worker_num=None, reloader_pid=None,
-             debug=None):
+    def _run(self, *, host, port, worker_num=None, reloader_pid=None, debug=None):
         self._debug = debug or self._debug
         if self._debug and self._log_request is None:
             self._log_request = self._debug
@@ -273,7 +269,7 @@ class Application:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         sock.bind((host, port))
-        os.set_inheritable(sock.fileno(), True)
+        os_set_inheritable(sock.fileno(), True)
 
         workers = set()
 
@@ -294,7 +290,8 @@ class Application:
         signal.signal(signal.SIGHUP, stop)
 
         for _ in range(worker_num or 1):
-            worker = multiprocessing.Process(target=self.serve, kwargs=dict(sock=sock, host=host, port=port, reloader_pid=reloader_pid))
+            print('Starting worker number {} on http://{}:{}'.format(_+1, host, port))
+            worker = mult_process(target=self.serve, kwargs=dict(sock=sock, host=host, port=port, reloader_pid=reloader_pid))
             worker.daemon = True
             worker.start()
             workers.add(worker)
@@ -312,25 +309,21 @@ class Application:
                 try:
                     signame = signames[-worker.exitcode]
                 except KeyError:
-                    print(
-                        'Worker crashed with unknown code {}!'
-                        .format(worker.exitcode))
+                    print('Worker crashed with unknown code {}!'.format(worker.exitcode))
                 else:
                     print('Worker crashed on signal {}!'.format(signame))
 
-    def run(self, host='127.0.0.1', port=8080, *, worker_num=None, reload=False,
-            debug=False):
-        if os.environ.get('_JAPR_IGNORE_RUN'):
+    def run(self, host='127.0.0.1', port=8080, *, worker_num=None, reload=False, debug=False):
+        if os_environ.get('_JAPR_IGNORE_RUN'):
             return
 
         reloader_pid = None
-        jarp_var = os.environ.get('_JAPR_RELOADER')
+        jarp_var = os_environ.get('_JAPR_RELOADER')
         if reload and jarp_var:
             reloader_pid = int(jarp_var)
         elif reload:
             from japronto.reloader import exec_reloader
             exec_reloader(host=host, port=port, worker_num=worker_num)
 
-        self._run(
-            host=host, port=port, worker_num=worker_num,
-            reloader_pid=reloader_pid, debug=debug)
+
+        self._run(host=host, port=port, worker_num=worker_num, reloader_pid=reloader_pid, debug=debug)
