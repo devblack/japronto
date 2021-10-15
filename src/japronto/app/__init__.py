@@ -168,12 +168,12 @@ class Application:
         idle, busy = self._get_idle_and_busy_connections()
         for c in idle:
             c.transport.close()
-#       for c in busy_connections:
-#            need to implement something that makes protocol.on_data
-#            start rejecting incoming data
-#            this closes transport unfortunately
-#            sock = c.transport.get_extra_info('socket')
-#            sock.shutdown(socket.SHUT_RD)
+        #       for c in busy_connections:
+        #            need to implement something that makes protocol.on_data
+        #            start rejecting incoming data
+        #            this closes transport unfortunately
+        #            sock = c.transport.get_extra_info('socket')
+        #            sock.shutdown(socket.SHUT_RD)
 
         if idle or busy:
             print('Draining connections...')
@@ -208,6 +208,10 @@ class Application:
         if not name:
             name = handler.__name__
         def decorator(f):
+                # check awaitable handler
+                if iscoroutinefunction(f):
+                    return await f
+                return handler(*args, **kwargs)
             return f
         self._request_extensions[name] = (handler, property)
         return decorator
